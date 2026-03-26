@@ -17,12 +17,27 @@ import { uploadService } from '../services/upload'
 import type { PostSummary } from '../types/api'
 import { toAbsoluteImageUrl } from '../utils/url'
 
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+}
+
 function SortablePostRow({
   post,
   onDelete,
+  onTogglePublished,
+  isToggling,
+  onEdit,
 }: {
   post: PostSummary
   onDelete: (id: number) => void
+  onTogglePublished: (post: PostSummary, nextPublished: boolean) => void
+  isToggling: boolean
+  onEdit: (post: PostSummary) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: post.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
@@ -40,19 +55,44 @@ function SortablePostRow({
         <p className="truncate font-medium text-slate-900">{post.title}</p>
         <p className="truncate text-sm text-slate-500">{post.slug}</p>
       </Link>
-      <button
-        className="rounded-md bg-rose-100 px-2.5 py-1.5 text-sm text-rose-700"
-        type="button"
-        onClick={() => onDelete(post.id)}
-      >
-        Delete
-      </button>
+      <div className="flex items-center gap-2">
+        <label className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={post.isPublished}
+            disabled={isToggling}
+            onChange={(e) => onTogglePublished(post, e.target.checked)}
+          />
+          Published
+        </label>
+        <button
+          className="rounded-md bg-slate-100 px-2.5 py-1.5 text-sm text-slate-700"
+          type="button"
+          onClick={() => onEdit(post)}
+        >
+          Edit
+        </button>
+        <button
+          className="rounded-md bg-rose-100 px-2.5 py-1.5 text-sm text-rose-700"
+          type="button"
+          onClick={() => onDelete(post.id)}
+        >
+          Delete
+        </button>
+      </div>
     </div>
   )
 }
 
 export function PostsPage() {
   const queryClient = useQueryClient()
+  const [editingPostId, setEditingPostId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState({
+    title: '',
+    preparationYear: new Date().getFullYear(),
+    primaryImageUrl: '',
+    categoryId: 0,
+  })
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -86,6 +126,45 @@ export function PostsPage() {
   const deleteMutation = useMutation({
     mutationFn: postsService.remove,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['posts'] }),
+  })
+
+  const updatePostMutation = useMutation({
+    mutationFn: (args: {
+      id: number
+      payload: {
+        title: string
+        preparationYear: number
+        primaryImageUrl: string
+        categoryId: number
+      }
+    }) => postsService.update(args.id, args.payload),
+    onSuccess: () => {
+      setEditingPostId(null)
+      queryClient.invalidateQueries({ queryKey: ['posts'] })
+    },
+  })
+
+  const uploadEditPrimaryImageMutation = useMutation({
+    mutationFn: (file: File) => uploadService.uploadImage(file),
+    onSuccess: (url) => setEditForm((prev) => ({ ...prev, primaryImageUrl: url })),
+  })
+
+  const togglePublishedMutation = useMutation({
+    mutationFn: ({ id, isPublished }: { id: number; isPublished: boolean }) =>
+      postsService.update(id, { isPublished }),
+    onMutate: async ({ id, isPublished }) => {
+      await queryClient.cancelQueries({ queryKey: ['posts'] })
+      const prev = queryClient.getQueryData<PostSummary[]>(['posts']) ?? []
+      queryClient.setQueryData<PostSummary[]>(
+        ['posts'],
+        prev.map((post) => (post.id === id ? { ...post, isPublished } : post)),
+      )
+      return { prev }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.prev) queryClient.setQueryData(['posts'], context.prev)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['posts'] }),
   })
 
   const reorderMutation = useMutation({
@@ -210,11 +289,128 @@ export function PostsPage() {
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={posts.map((p) => p.id)} strategy={verticalListSortingStrategy}>
               {posts.map((post) => (
-                <SortablePostRow key={post.id} post={post} onDelete={(id) => deleteMutation.mutate(id)} />
+                <SortablePostRow
+                  key={post.id}
+                  post={post}
+                  onDelete={(id) => deleteMutation.mutate(id)}
+                  onEdit={(item) => {
+                    setEditingPostId(item.id)
+                    setEditForm({
+                      title: item.title,
+                      preparationYear: item.preparationYear,
+                      primaryImageUrl: item.primaryImageUrl,
+                      categoryId: item.categoryId,
+                    })
+                  }}
+                  onTogglePublished={(currentPost, nextPublished) =>
+                    togglePublishedMutation.mutate({
+                      id: currentPost.id,
+                      isPublished: nextPublished,
+                    })
+                  }
+                  isToggling={
+                    togglePublishedMutation.isPending &&
+                    togglePublishedMutation.variables?.id === post.id
+                  }
+                />
               ))}
             </SortableContext>
           </DndContext>
         </div>
+      )}
+
+      {editingPostId !== null && (
+        <form
+          className="grid gap-2 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            updatePostMutation.mutate({
+              id: editingPostId,
+              payload: {
+                title: editForm.title,
+                preparationYear: editForm.preparationYear,
+                primaryImageUrl: editForm.primaryImageUrl,
+                categoryId: editForm.categoryId,
+              },
+            })
+          }}
+        >
+          <div>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={editForm.title}
+              placeholder="Title"
+              onChange={(e) => setEditForm((prev) => ({ ...prev, title: e.target.value }))}
+            />
+            <p className="mt-1 text-xs text-slate-500">Slug preview: {slugify(editForm.title) || '-'}</p>
+          </div>
+          <input
+            className="rounded-md border px-3 py-2"
+            type="number"
+            value={editForm.preparationYear}
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, preparationYear: Number(e.target.value) }))
+            }
+          />
+          <div className="space-y-2">
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={editForm.primaryImageUrl}
+              placeholder="Primary image URL"
+              onChange={(e) =>
+                setEditForm((prev) => ({ ...prev, primaryImageUrl: e.target.value }))
+              }
+            />
+            <label className="block text-sm text-slate-600">
+              Upload new primary image
+              <input
+                className="mt-1 block w-full text-sm"
+                type="file"
+                accept="image/*"
+                disabled={uploadEditPrimaryImageMutation.isPending}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) uploadEditPrimaryImageMutation.mutate(file)
+                }}
+              />
+            </label>
+            {editForm.primaryImageUrl && (
+              <img
+                src={toAbsoluteImageUrl(editForm.primaryImageUrl)}
+                alt="Primary preview"
+                className="h-24 w-full rounded border border-slate-200 object-cover"
+              />
+            )}
+          </div>
+          <select
+            className="rounded-md border px-3 py-2"
+            value={editForm.categoryId}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, categoryId: Number(e.target.value) }))}
+            disabled={categoriesQuery.isLoading || !categoriesQuery.data?.length}
+          >
+            {(categoriesQuery.data ?? []).map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2 md:col-span-2">
+            <button
+              className="rounded-md bg-slate-900 px-3 py-2 text-white disabled:opacity-50"
+              type="submit"
+              disabled={updatePostMutation.isPending}
+            >
+              {updatePostMutation.isPending ? 'Saving...' : 'Save changes'}
+            </button>
+            <button
+              className="rounded-md bg-slate-100 px-3 py-2 text-slate-700"
+              type="button"
+              onClick={() => setEditingPostId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       )}
     </div>
   )

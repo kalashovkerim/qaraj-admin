@@ -89,6 +89,7 @@ export function PostsPage() {
   const [editingPostId, setEditingPostId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState({
     title: '',
+    description: '',
     preparationYear: new Date().getFullYear(),
     primaryImageUrl: '',
     categoryId: 0,
@@ -133,6 +134,7 @@ export function PostsPage() {
       id: number
       payload: {
         title: string
+        description: string
         preparationYear: number
         primaryImageUrl: string
         categoryId: number
@@ -297,6 +299,7 @@ export function PostsPage() {
                     setEditingPostId(item.id)
                     setEditForm({
                       title: item.title,
+                      description: item.description,
                       preparationYear: item.preparationYear,
                       primaryImageUrl: item.primaryImageUrl,
                       categoryId: item.categoryId,
@@ -328,6 +331,7 @@ export function PostsPage() {
               id: editingPostId,
               payload: {
                 title: editForm.title,
+                description: editForm.description,
                 preparationYear: editForm.preparationYear,
                 primaryImageUrl: editForm.primaryImageUrl,
                 categoryId: editForm.categoryId,
@@ -350,6 +354,14 @@ export function PostsPage() {
             value={editForm.preparationYear}
             onChange={(e) =>
               setEditForm((prev) => ({ ...prev, preparationYear: Number(e.target.value) }))
+            }
+          />
+          <input
+            className="rounded-md border px-3 py-2 md:col-span-2"
+            value={editForm.description}
+            placeholder="Description"
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, description: e.target.value }))
             }
           />
           <div className="space-y-2">

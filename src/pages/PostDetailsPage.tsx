@@ -16,6 +16,10 @@ function typeLabel(type: SectionType) {
   return 'IMAGE COLLECTION'
 }
 
+function normalizeLineBreaks(value: string) {
+  return value.replace(/\r\n/g, '\n')
+}
+
 function SortableSectionWrapper({
   section,
   index,
@@ -280,13 +284,17 @@ function ImageCollectionSectionBlock({
 }
 
 function AddSectionControl({
-  onAdd,
+  onAddText,
+  onAddImageCollection,
   disabled,
 }: {
-  onAdd: (type: SectionType) => void
+  onAddText: (textContent: string) => void
+  onAddImageCollection: () => void
   disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<SectionType | null>(null)
+  const [textContent, setTextContent] = useState('')
 
   return (
     <div className="py-10">
@@ -300,37 +308,82 @@ function AddSectionControl({
           + Add Section
         </button>
       ) : (
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={disabled}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
-            onClick={() => {
-              onAdd('TEXT')
-              setOpen(false)
-            }}
-          >
-            TEXT
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
-            onClick={() => {
-              onAdd('IMAGE_COLLECTION')
-              setOpen(false)
-            }}
-          >
-            IMAGE COLLECTION
-          </button>
-          <button
-            type="button"
-            className="text-xs text-slate-500 hover:text-slate-700"
-            onClick={() => setOpen(false)}
-            disabled={disabled}
-          >
-            Cancel
-          </button>
+        <div className="space-y-3">
+          {mode === null && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={disabled}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
+                onClick={() => setMode('TEXT')}
+              >
+                TEXT
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
+                onClick={() => {
+                  onAddImageCollection()
+                  setMode(null)
+                  setOpen(false)
+                }}
+              >
+                IMAGE COLLECTION
+              </button>
+              <button
+                type="button"
+                className="text-xs text-slate-500 hover:text-slate-700"
+                onClick={() => setOpen(false)}
+                disabled={disabled}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {mode === 'TEXT' && (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const trimmed = textContent.trim()
+                if (!trimmed) return
+                onAddText(normalizeLineBreaks(trimmed))
+                setTextContent('')
+                setMode(null)
+                setOpen(false)
+              }}
+            >
+              <textarea
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Write text for this section..."
+                value={textContent}
+                onChange={(e) => setTextContent(e.target.value)}
+                rows={4}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={disabled || textContent.trim().length === 0}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  Add text section
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                  onClick={() => {
+                    setMode(null)
+                    setTextContent('')
+                  }}
+                  disabled={disabled}
+                >
+                  Back
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       )}
     </div>
@@ -360,7 +413,7 @@ export function PostDetailsPage() {
 
   const updateTextMutation = useMutation({
     mutationFn: ({ sectionId, text }: { sectionId: number; text: string }) => {
-      return sectionsService.update(sectionId, { textContent: text })
+      return sectionsService.update(sectionId, { textContent: normalizeLineBreaks(text) })
     },
     onMutate: async ({ sectionId }) => {
       // Keep current UI text as-is; the editor already shows the draft.
@@ -381,11 +434,34 @@ export function PostDetailsPage() {
   })
 
   const createSectionMutation = useMutation({
-    mutationFn: ({ type }: { type: SectionType }) => {
-      if (type === 'TEXT') return sectionsService.createForPost(postId, { type, textContent: '' })
-      return sectionsService.createForPost(postId, { type })
+    mutationFn: (args: {
+      insertAt: number
+      payload: { type: 'TEXT'; textContent: string } | { type: 'IMAGE_COLLECTION' }
+    }) => {
+      if (args.payload.type === 'TEXT') {
+        return sectionsService.createForPost(postId, {
+          type: 'TEXT',
+          textContent: args.payload.textContent,
+        })
+      }
+      return sectionsService.createForPost(postId, { type: 'IMAGE_COLLECTION' })
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
+    onSuccess: async (createdSection, variables) => {
+      const sortedSections = [...sections].sort((a, b) => a.orderIndex - b.orderIndex)
+      const insertIndex = Math.max(0, Math.min(variables.insertAt, sortedSections.length))
+
+      const reordered = [
+        ...sortedSections.slice(0, insertIndex).map((item) => item.id),
+        createdSection.id,
+        ...sortedSections.slice(insertIndex).map((item) => item.id),
+      ]
+
+      await sectionsService.reorder(
+        postId,
+        reordered.map((id, orderIndex) => ({ id, orderIndex })),
+      )
+      queryClient.invalidateQueries({ queryKey: ['post', postId] })
+    },
   })
 
   const removeSectionMutation = useMutation({
@@ -524,7 +600,18 @@ export function PostDetailsPage() {
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
                   <AddSectionControl
                     disabled={createSectionMutation.isPending}
-                    onAdd={(type) => createSectionMutation.mutate({ type })}
+                    onAddText={(textContent) =>
+                      createSectionMutation.mutate({
+                        insertAt: 0,
+                        payload: { type: 'TEXT', textContent },
+                      })
+                    }
+                    onAddImageCollection={() =>
+                      createSectionMutation.mutate({
+                        insertAt: 0,
+                        payload: { type: 'IMAGE_COLLECTION' },
+                      })
+                    }
                   />
 
                   <SortableContext items={sections.map((s) => s.id)} strategy={verticalListSortingStrategy}>
@@ -560,12 +647,39 @@ export function PostDetailsPage() {
                         {index < sections.length - 1 ? (
                           <AddSectionControl
                             disabled={createSectionMutation.isPending}
-                            onAdd={(type) => createSectionMutation.mutate({ type })}
+                            onAddText={(textContent) =>
+                              createSectionMutation.mutate({
+                                insertAt: index + 1,
+                                payload: { type: 'TEXT', textContent },
+                              })
+                            }
+                            onAddImageCollection={() =>
+                              createSectionMutation.mutate({
+                                insertAt: index + 1,
+                                payload: { type: 'IMAGE_COLLECTION' },
+                              })
+                            }
                           />
                         ) : null}
                       </div>
                     ))}
                   </SortableContext>
+
+                  <AddSectionControl
+                    disabled={createSectionMutation.isPending}
+                    onAddText={(textContent) =>
+                      createSectionMutation.mutate({
+                        insertAt: sections.length,
+                        payload: { type: 'TEXT', textContent },
+                      })
+                    }
+                    onAddImageCollection={() =>
+                      createSectionMutation.mutate({
+                        insertAt: sections.length,
+                        payload: { type: 'IMAGE_COLLECTION' },
+                      })
+                    }
+                  />
                 </DndContext>
               </div>
             </div>

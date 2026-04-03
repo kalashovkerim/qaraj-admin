@@ -41,27 +41,25 @@ export const sectionsService = {
   ) => {
     await apiClient.patch('/admin/sections/reorder', { postId, items });
   },
-  addImages: async (
+  addAssets: async (
     sectionId: number,
-    payload: {
-      images: Array<{ imageUrl: string; altText?: string }>;
-    }
+    assets: Array<{ imageUrl?: string; youtubeUrl?: string; videoUrl?: string; altText?: string }>
   ) => {
     const { data } = await apiClient.post<ApiEnvelope<SectionImage[]>>(
-      `/admin/sections/${sectionId}/images`,
-      payload
+      `/admin/sections/${sectionId}/assets`,
+      { assets }
     );
     return data.data;
   },
-  reorderImages: async (
+  reorderAssets: async (
     sectionId: number,
     items: Array<{ id: number; orderIndex: number }>
   ) => {
-    await apiClient.patch(`/admin/sections/${sectionId}/images/reorder`, {
+    await apiClient.patch(`/admin/sections/${sectionId}/assets/reorder`, {
       items,
     });
   },
-  removeImage: async (sectionId: number, imageId: number) => {
-    await apiClient.delete(`/admin/sections/${sectionId}/images/${imageId}`);
+  removeAsset: async (sectionId: number, assetId: number) => {
+    await apiClient.delete(`/admin/sections/${sectionId}/assets/${assetId}`);
   },
 };

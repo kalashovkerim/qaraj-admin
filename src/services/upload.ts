@@ -5,7 +5,7 @@ import { toAbsoluteImageUrl } from '../utils/url'
 export const uploadService = {
   uploadImage: async (file: File) => {
     const formData = new FormData()
-    formData.append('image', file)
+    formData.append('file', file)
     const { data } = await apiClient.post<ApiEnvelope<{ url: string }>>('/admin/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })

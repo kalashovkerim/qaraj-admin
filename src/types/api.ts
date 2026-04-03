@@ -40,7 +40,9 @@ export type Category = {
 export type SectionImage = {
   id: number
   sectionId: number
-  imageUrl: string
+  imageUrl: string | null
+  youtubeUrl: string | null
+  videoUrl: string | null
   altText: string | null
   orderIndex: number
   createdAt: string
@@ -56,6 +58,15 @@ export type Section = {
   textContent: string | null
   orderIndex: number
   images: SectionImage[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type TeamMember = {
+  id: number
+  postId: number
+  fullname: string
+  title: string
   createdAt: string
   updatedAt: string
 }
@@ -77,4 +88,5 @@ export type PostSummary = {
 
 export type PostDetail = PostSummary & {
   sections: Section[]
+  teamMembers?: TeamMember[]
 }

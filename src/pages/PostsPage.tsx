@@ -275,15 +275,25 @@ export function PostsPage() {
           <p className="text-sm text-rose-600 md:col-span-2">Failed to load categories.</p>
         )}
         <button
-          className="rounded-md bg-slate-900 px-3 py-2 text-white md:col-span-2 disabled:opacity-50"
+          className="flex items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-white md:col-span-2 disabled:opacity-50"
           type="submit"
-          disabled={!categoriesQuery.data?.length}
+          disabled={!categoriesQuery.data?.length || createMutation.isPending}
         >
-          Create post
+          {createMutation.isPending && (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          )}
+          {createMutation.isPending ? 'Creating...' : 'Create post'}
         </button>
       </form>
 
-      {postsQuery.isLoading && <p>Loading posts...</p>}
+      {postsQuery.isLoading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="flex flex-col items-center gap-4">
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-slate-200 border-t-slate-900" />
+            <span className="text-sm text-slate-500">Loading posts...</span>
+          </div>
+        </div>
+      )}
       {postsQuery.isError && <p className="text-rose-600">Failed to load posts.</p>}
 
       {!postsQuery.isLoading && !postsQuery.isError && (
@@ -408,10 +418,13 @@ export function PostsPage() {
           </select>
           <div className="flex gap-2 md:col-span-2">
             <button
-              className="rounded-md bg-slate-900 px-3 py-2 text-white disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-white disabled:opacity-50"
               type="submit"
               disabled={updatePostMutation.isPending}
             >
+              {updatePostMutation.isPending && (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              )}
               {updatePostMutation.isPending ? 'Saving...' : 'Save changes'}
             </button>
             <button

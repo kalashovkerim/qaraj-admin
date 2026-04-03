@@ -6,8 +6,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { postsService } from '../services/posts'
 import { sectionsService } from '../services/sections'
+import { teamMembersService } from '../services/teamMembers'
 import { uploadService } from '../services/upload'
-import type { PostDetail, Section, SectionImage, SectionType } from '../types/api'
+import type { PostDetail, Section, SectionImage, SectionType, TeamMember } from '../types/api'
 import { toAbsoluteImageUrl } from '../utils/url'
 import { useNavigate } from 'react-router-dom'
 
@@ -142,7 +143,18 @@ function TextSectionBlock({
   )
 }
 
-function ImageTile({
+function getYoutubeEmbedUrl(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+  ]
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match) return `https://www.youtube.com/embed/${match[1]}`
+  }
+  return null
+}
+
+function MediaTile({
   image,
   onDelete,
 }: {
@@ -152,9 +164,40 @@ function ImageTile({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: image.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
 
-  return (
-    <div ref={setNodeRef} style={style} className={`relative ${isDragging ? 'opacity-60' : 'opacity-100'}`}>
-      <div className="relative overflow-hidden rounded-lg bg-slate-50">
+  const isYoutube = !!image.youtubeUrl
+  const isVideo = !!image.videoUrl
+  const isImage = !!image.imageUrl
+
+  const renderMedia = () => {
+    if (isYoutube && image.youtubeUrl) {
+      const embedUrl = getYoutubeEmbedUrl(image.youtubeUrl)
+      if (embedUrl) {
+        return (
+          <iframe
+            src={embedUrl}
+            title={image.altText ?? 'YouTube video'}
+            className="h-full w-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        )
+      }
+      return <div className="flex h-full items-center justify-center text-sm text-slate-500">Invalid YouTube URL</div>
+    }
+
+    if (isVideo && image.videoUrl) {
+      return (
+        <video
+          src={toAbsoluteImageUrl(image.videoUrl)}
+          className="h-full w-full object-cover"
+          controls
+          preload="metadata"
+        />
+      )
+    }
+
+    if (isImage && image.imageUrl) {
+      return (
         <img
           src={toAbsoluteImageUrl(image.imageUrl)}
           alt={image.altText ?? ''}
@@ -162,16 +205,31 @@ function ImageTile({
           loading="lazy"
           draggable={false}
         />
+      )
+    }
+
+    return <div className="flex h-full items-center justify-center text-sm text-slate-500">No media</div>
+  }
+
+  const mediaTypeLabel = isYoutube ? 'YouTube' : isVideo ? 'Video' : 'Image'
+
+  return (
+    <div ref={setNodeRef} style={style} className={`relative h-full ${isDragging ? 'opacity-60' : 'opacity-100'}`}>
+      <div className="relative h-full overflow-hidden rounded-lg bg-slate-50">
+        {renderMedia()}
         <div className="absolute left-2 top-2 flex items-center gap-2">
           <button
             type="button"
             className="pointer-events-auto rounded bg-white/80 px-2 py-1 text-xs text-slate-900 shadow-sm"
-            aria-label="Drag image"
+            aria-label="Drag media"
             {...attributes}
             {...listeners}
           >
             ↕
           </button>
+          <span className="rounded bg-white/80 px-2 py-1 text-xs text-slate-600 shadow-sm">
+            {mediaTypeLabel}
+          </span>
         </div>
 
         <button
@@ -188,18 +246,24 @@ function ImageTile({
 
 function ImageCollectionSectionBlock({
   section,
-  onUploadFiles,
+  onUploadImages,
+  onUploadVideos,
+  onAddYoutube,
   onDeleteImage,
   onReorderImages,
   isUploading,
   isReordering,
+  isAddingYoutube,
 }: {
   section: Section
-  onUploadFiles: (sectionId: number, files: File[]) => void
+  onUploadImages: (sectionId: number, files: File[]) => void
+  onUploadVideos: (sectionId: number, files: File[]) => void
+  onAddYoutube: (sectionId: number, youtubeUrl: string) => void
   onDeleteImage: (sectionId: number, imageId: number) => void
   onReorderImages: (sectionId: number, items: Array<{ id: number; orderIndex: number }>) => void
   isUploading: boolean
   isReordering: boolean
+  isAddingYoutube: boolean
 }) {
   const images = useMemo(
     () => [...(section.images ?? [])].sort((a, b) => a.orderIndex - b.orderIndex),
@@ -207,6 +271,8 @@ function ImageCollectionSectionBlock({
   )
 
   const [isDropActive, setIsDropActive] = useState(false)
+  const [showYoutubeInput, setShowYoutubeInput] = useState(false)
+  const [youtubeUrl, setYoutubeUrl] = useState('')
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -221,30 +287,97 @@ function ImageCollectionSectionBlock({
     onReorderImages(section.id, moved.map((img, index) => ({ id: img.id, orderIndex: index })))
   }
 
+  const handleYoutubeSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = youtubeUrl.trim()
+    if (!trimmed) return
+    onAddYoutube(section.id, trimmed)
+    setYoutubeUrl('')
+    setShowYoutubeInput(false)
+  }
+
+  const isBusy = isUploading || isReordering || isAddingYoutube
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-          Images
+          Media
           {isUploading ? <span className="ml-3 text-slate-400">Uploading...</span> : null}
           {isReordering ? <span className="ml-3 text-slate-400">Reordering...</span> : null}
+          {isAddingYoutube ? <span className="ml-3 text-slate-400">Adding...</span> : null}
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90">
-          Upload
-          <input
-            type="file"
-            accept="image/*"
-            disabled={isUploading || isReordering}
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (!file) return
-              onUploadFiles(section.id, [file])
-              e.currentTarget.value = ''
-            }}
-          />
-        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90">
+            Image
+            <input
+              type="file"
+              accept="image/*"
+              disabled={isBusy}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                onUploadImages(section.id, [file])
+                e.currentTarget.value = ''
+              }}
+            />
+          </label>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90">
+            Video
+            <input
+              type="file"
+              accept="video/*"
+              disabled={isBusy}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                onUploadVideos(section.id, [file])
+                e.currentTarget.value = ''
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={isBusy}
+            className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
+            onClick={() => setShowYoutubeInput(!showYoutubeInput)}
+          >
+            YouTube
+          </button>
+        </div>
       </div>
+
+      {showYoutubeInput && (
+        <form onSubmit={handleYoutubeSubmit} className="flex items-center gap-3">
+          <input
+            type="url"
+            placeholder="Paste YouTube URL..."
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            disabled={isAddingYoutube}
+            className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-slate-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={isAddingYoutube || !youtubeUrl.trim()}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowYoutubeInput(false)
+              setYoutubeUrl('')
+            }}
+            className="text-xs text-slate-500 hover:text-slate-700"
+          >
+            Cancel
+          </button>
+        </form>
+      )}
 
       <div
         onDragOver={(e) => {
@@ -255,20 +388,23 @@ function ImageCollectionSectionBlock({
         onDrop={(e) => {
           e.preventDefault()
           setIsDropActive(false)
-          const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith('image/'))
-          if (files.length) onUploadFiles(section.id, files)
+          const allFiles = Array.from(e.dataTransfer.files ?? [])
+          const imageFiles = allFiles.filter((f) => f.type.startsWith('image/'))
+          const videoFiles = allFiles.filter((f) => f.type.startsWith('video/'))
+          if (imageFiles.length) onUploadImages(section.id, imageFiles)
+          if (videoFiles.length) onUploadVideos(section.id, videoFiles)
         }}
         className={`rounded-lg ${isDropActive ? 'bg-slate-50' : 'bg-transparent'} transition-colors`}
       >
         {images.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-500">Drop images here or upload.</div>
+          <div className="py-10 text-center text-sm text-slate-500">Drop images or videos here, or use the buttons above.</div>
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={images.map((img) => img.id)} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 {images.map((img) => (
                   <div key={img.id} className="aspect-[4/3]">
-                    <ImageTile
+                    <MediaTile
                       image={img}
                       onDelete={(imageId) => onDeleteImage(section.id, imageId)}
                     />
@@ -390,6 +526,181 @@ function AddSectionControl({
   )
 }
 
+function PostTeamMembersPanel({ postId, members }: { postId: number; members: TeamMember[] }) {
+  const queryClient = useQueryClient()
+  const [fullname, setFullname] = useState('')
+  const [roleTitle, setRoleTitle] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editFullname, setEditFullname] = useState('')
+  const [editRoleTitle, setEditRoleTitle] = useState('')
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      teamMembersService.createForPost(postId, {
+        fullname: fullname.trim(),
+        title: roleTitle.trim(),
+      }),
+    onSuccess: () => {
+      setFullname('')
+      setRoleTitle('')
+      queryClient.invalidateQueries({ queryKey: ['post', postId] })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (args: { id: number; fullname: string; title: string }) =>
+      teamMembersService.update(args.id, { fullname: args.fullname, title: args.title }),
+    onSuccess: () => {
+      setEditingId(null)
+      queryClient.invalidateQueries({ queryKey: ['post', postId] })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => teamMembersService.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
+  })
+
+  const isBusy =
+    createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
+
+  return (
+    <div className="mb-12 rounded-lg border border-slate-200 bg-slate-50/50 p-6">
+      <h3 className="text-xs uppercase tracking-[0.18em] text-slate-500">Team members</h3>
+      <p className="mt-1 text-sm text-slate-500">Credits for this project (name and role).</p>
+
+      <form
+        className="mt-4 grid gap-2 md:grid-cols-[1fr_1fr_auto]"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!fullname.trim() || !roleTitle.trim()) return
+          createMutation.mutate()
+        }}
+      >
+        <input
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          placeholder="Full name"
+          value={fullname}
+          onChange={(e) => setFullname(e.target.value)}
+          disabled={isBusy}
+        />
+        <input
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          placeholder="Title / role"
+          value={roleTitle}
+          onChange={(e) => setRoleTitle(e.target.value)}
+          disabled={isBusy}
+        />
+        <button
+          type="submit"
+          className="flex items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          disabled={isBusy || !fullname.trim() || !roleTitle.trim()}
+        >
+          {createMutation.isPending && (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          )}
+          Add member
+        </button>
+      </form>
+      {(createMutation.isError || updateMutation.isError || deleteMutation.isError) && (
+        <p className="mt-2 text-sm text-rose-600">Something went wrong. Try again.</p>
+      )}
+
+      <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {members.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-slate-500">No team members yet.</p>
+        ) : (
+          members.map((m) => (
+            <div
+              key={m.id}
+              className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+            >
+              {editingId === m.id ? (
+                <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={editFullname}
+                    onChange={(e) => setEditFullname(e.target.value)}
+                    disabled={updateMutation.isPending}
+                  />
+                  <input
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={editRoleTitle}
+                    onChange={(e) => setEditRoleTitle(e.target.value)}
+                    disabled={updateMutation.isPending}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <p className="font-medium text-slate-900">{m.fullname}</p>
+                  <p className="text-sm text-slate-500">{m.title}</p>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {editingId === m.id ? (
+                  <>
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                      disabled={updateMutation.isPending || !editFullname.trim() || !editRoleTitle.trim()}
+                      onClick={() =>
+                        updateMutation.mutate({
+                          id: m.id,
+                          fullname: editFullname.trim(),
+                          title: editRoleTitle.trim(),
+                        })
+                      }
+                    >
+                      {updateMutation.isPending && (
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      )}
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md bg-slate-100 px-3 py-1.5 text-sm text-slate-700"
+                      disabled={updateMutation.isPending}
+                      onClick={() => setEditingId(null)}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-md bg-slate-100 px-3 py-1.5 text-sm text-slate-700"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setEditingId(m.id)
+                        setEditFullname(m.fullname)
+                        setEditRoleTitle(m.title)
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="flex items-center justify-center gap-2 rounded-md bg-rose-100 px-3 py-1.5 text-sm text-rose-700 disabled:opacity-50"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => deleteMutation.mutate(m.id)}
+                    >
+                      {deleteMutation.isPending && deleteMutation.variables === m.id ? (
+                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-400 border-t-rose-700" aria-hidden />
+                      ) : null}
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function PostDetailsPage() {
   const { id } = useParams()
   const postId = Number(id)
@@ -472,14 +783,29 @@ export function PostDetailsPage() {
   const addImagesMutation = useMutation({
     mutationFn: async ({ sectionId, files }: { sectionId: number; files: File[] }) => {
       const urls = await Promise.all(files.map((f) => uploadService.uploadImage(f)))
-      return sectionsService.addImages(sectionId, { images: urls.map((url) => ({ imageUrl: url })) })
+      return sectionsService.addAssets(sectionId, urls.map((url) => ({ imageUrl: url })))
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
+  })
+
+  const addVideosMutation = useMutation({
+    mutationFn: async ({ sectionId, files }: { sectionId: number; files: File[] }) => {
+      const urls = await Promise.all(files.map((f) => uploadService.uploadImage(f)))
+      return sectionsService.addAssets(sectionId, urls.map((url) => ({ videoUrl: url })))
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
+  })
+
+  const addYoutubeMutation = useMutation({
+    mutationFn: async ({ sectionId, youtubeUrl }: { sectionId: number; youtubeUrl: string }) => {
+      return sectionsService.addAssets(sectionId, [{ youtubeUrl }])
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
   })
 
   const deleteImageMutation = useMutation({
     mutationFn: ({ sectionId, imageId }: { sectionId: number; imageId: number }) =>
-      sectionsService.removeImage(sectionId, imageId),
+      sectionsService.removeAsset(sectionId, imageId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['post', postId] }),
   })
 
@@ -513,7 +839,7 @@ export function PostDetailsPage() {
 
   const reorderImagesMutation = useMutation({
     mutationFn: ({ sectionId, items }: { sectionId: number; items: Array<{ id: number; orderIndex: number }> }) =>
-      sectionsService.reorderImages(sectionId, items),
+      sectionsService.reorderAssets(sectionId, items),
     onMutate: async ({ sectionId, items }) => {
       await queryClient.cancelQueries({ queryKey: ['post', postId] })
       const prev = queryClient.getQueryData<PostDetail>(['post', postId])
@@ -544,6 +870,14 @@ export function PostDetailsPage() {
 
   const isTextSaving = (sectionId: number) => updateTextMutation.isPending && updateTextMutation.variables?.sectionId === sectionId
 
+  const isSectionsBusy =
+    createSectionMutation.isPending ||
+    removeSectionMutation.isPending ||
+    addImagesMutation.isPending ||
+    addVideosMutation.isPending ||
+    addYoutubeMutation.isPending ||
+    deleteImageMutation.isPending
+
   const handleSectionDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -556,7 +890,16 @@ export function PostDetailsPage() {
     reorderSectionsMutation.mutate(moved.map((s, index) => ({ id: s.id, orderIndex: index })))
   }
 
-  if (postQuery.isLoading) return <p>Loading post...</p>
+  if (postQuery.isLoading) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-slate-200 border-t-slate-900" />
+          <span className="text-sm text-slate-500">Loading post...</span>
+        </div>
+      </div>
+    )
+  }
   if (postQuery.isError || !postQuery.data) return <p className="text-rose-600">Post not found.</p>
 
   return (
@@ -596,7 +939,17 @@ export function PostDetailsPage() {
                 ) : null}
               </div>
 
-              <div className="space-y-0">
+              <PostTeamMembersPanel postId={postId} members={postQuery.data.teamMembers ?? []} />
+
+              <div className="relative space-y-0">
+                {isSectionsBusy && (
+                  <div className="absolute inset-0 z-20 flex items-start justify-center bg-white/60 pt-24">
+                    <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+                      <span className="text-sm text-slate-600">Processing...</span>
+                    </div>
+                  </div>
+                )}
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
                   <AddSectionControl
                     disabled={createSectionMutation.isPending}
@@ -634,11 +987,14 @@ export function PostDetailsPage() {
                             ) : (
                               <ImageCollectionSectionBlock
                                 section={section}
-                                onUploadFiles={(sectionId, files) => addImagesMutation.mutate({ sectionId, files })}
+                                onUploadImages={(sectionId, files) => addImagesMutation.mutate({ sectionId, files })}
+                                onUploadVideos={(sectionId, files) => addVideosMutation.mutate({ sectionId, files })}
+                                onAddYoutube={(sectionId, youtubeUrl) => addYoutubeMutation.mutate({ sectionId, youtubeUrl })}
                                 onDeleteImage={(sectionId, imageId) => deleteImageMutation.mutate({ sectionId, imageId })}
                                 onReorderImages={(sectionId, items) => reorderImagesMutation.mutate({ sectionId, items })}
-                                isUploading={addImagesMutation.isPending}
+                                isUploading={addImagesMutation.isPending || addVideosMutation.isPending}
                                 isReordering={reorderMeta?.sectionId === section.id && reorderImagesMutation.isPending}
+                                isAddingYoutube={addYoutubeMutation.isPending}
                               />
                             )}
                           </div>

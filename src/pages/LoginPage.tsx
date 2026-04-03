@@ -48,10 +48,13 @@ export function LoginPage() {
           <p className="text-sm text-rose-600">Login failed. Check credentials.</p>
         )}
         <button
-          className="w-full rounded-md bg-slate-900 px-3 py-2 font-medium text-white disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 font-medium text-white disabled:opacity-50"
           disabled={loginMutation.isPending}
           type="submit"
         >
+          {loginMutation.isPending && (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          )}
           {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
         </button>
       </form>
